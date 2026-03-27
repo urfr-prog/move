@@ -221,24 +221,16 @@ function getDominoTex(leftIdx, rightIdx, tint) {
     ctx.stroke();
     ctx.shadowBlur = 0;
 
-    // ═══ SUPERPOSITION — deux icônes plein carré empilées ═══
-    const iconSz = S * 0.55;
-
-    // Couche arrière (face2 / rightIdx) — plus discrète
-    ctx.globalAlpha = 0.35;
-    drawIcon(ctx, rightIdx, S*0.5, S*0.5, iconSz, iconC);
-    ctx.globalAlpha = 1.0;
-
-    // Couche avant (face1 / leftIdx) — pleine intensité
-    drawIcon(ctx, leftIdx, S*0.5, S*0.5, iconSz, iconC);
-
-    // Médiane subtile par-dessus (séparateur visuel)
-    ctx.strokeStyle = sep; ctx.lineWidth = 1.5;
-    ctx.globalAlpha = 0.4;
-    ctx.shadowColor = sep; ctx.shadowBlur = 6;
-    ctx.beginPath(); ctx.moveTo(m+20, S/2); ctx.lineTo(S-m-20, S/2); ctx.stroke();
+    // Séparateur horizontal (médiane)
+    ctx.strokeStyle = sep; ctx.lineWidth = 2.5;
+    ctx.shadowColor = sep; ctx.shadowBlur = 8;
+    ctx.beginPath(); ctx.moveTo(m+16, S/2); ctx.lineTo(S-m-16, S/2); ctx.stroke();
     ctx.shadowBlur = 0;
-    ctx.globalAlpha = 1.0;
+
+    // Icônes — haut et bas
+    const iconSz = S * 0.42;
+    drawIcon(ctx, leftIdx,  S*0.5, S*0.25, iconSz, iconC);
+    drawIcon(ctx, rightIdx, S*0.5, S*0.75, iconSz, iconC);
 
     const tex = new THREE.CanvasTexture(cv);
     _dtc[k] = tex;
@@ -247,22 +239,22 @@ function getDominoTex(leftIdx, rightIdx, tint) {
 
 // ═══ TABLEAUX ═══
 
-const GAP = 1.15;
+const GAP = 1.0;
 const TABLEAUX = [
     { name:'T1', sats:[
-        {x:GAP, y:0, v:[11,13]}, {x:-GAP, y:0, v:[17,10], state:'cosmic'}
+        {x:GAP, y:0, v:[11,13]}, {x:-GAP, y:0, v:[13,10]}
     ] },
     { name:'T2', sats:[
-        {x:0, y:-GAP, v:[14,12], state:'supernovae'}, {x:0, y:GAP, v:[16,11]}
+        {x:0, y:-GAP, v:[14,11]}, {x:0, y:GAP, v:[14,16]}
     ] },
     { name:'T3', sats:[
-        {x:-GAP, y:-GAP, v:[13,15], state:'emerald'}, {x:GAP, y:-GAP, v:[10,17], state:'cosmic'},
-        {x:-GAP, y:GAP, v:[12,14]}, {x:GAP, y:GAP, v:[11,16], state:'silver'}
+        {x:-GAP, y:-GAP, v:[13,15]}, {x:GAP, y:-GAP, v:[10,13]},
+        {x:-GAP, y:GAP, v:[15,14]}, {x:GAP, y:GAP, v:[11,10], state:'silver'}
     ] },
     { name:'T4', sats:[
-        {x:GAP, y:-2*GAP, v:[0,11]}, {x:0, y:-2*GAP, v:[17,13], state:'supernovae'},
-        {x:GAP, y:-GAP, v:[15,10], state:'gold'}, {x:GAP, y:GAP, v:[12,8]},
-        {x:-GAP, y:-GAP, v:[14,2], state:'cosmic'}, {x:-GAP, y:GAP, v:[16,5]}
+        {x:GAP, y:-2*GAP, v:[0,11]}, {x:0, y:-2*GAP, v:[17,13]},
+        {x:GAP, y:-GAP, v:[11,10]}, {x:GAP, y:GAP, v:[12,8]},
+        {x:-GAP, y:-GAP, v:[14,2]}, {x:-GAP, y:GAP, v:[16,5]}
     ] },
 ];
 const TOTAL = TABLEAUX.length;
@@ -384,7 +376,84 @@ cubeGroup.add(haloSprite);
 
 function updatePorte(val){porteValue=val;const tex=makePorteTex(val);cubeMats.forEach(m=>{m.map=tex;m.needsUpdate=true;});}
 
-// ═══ SATELLITES — un seul plane texturé, pas de double carré ═══
+// ═══ GRILLE DAMIER — plaquée sur chaque face visible ═══
+
+function makeGridTexture(cols, rows){
+    const S=1024, cv=document.createElement('canvas'); cv.width=S*cols/Math.max(cols,rows); cv.height=S*rows/Math.max(cols,rows);
+    // Normaliser pour que les cellules soient carrées dans la texture
+    const cW=cv.width/cols, cH=cv.height/rows;
+    const ctx=cv.getContext('2d');
+    // Fond opaque sombre
+    ctx.fillStyle='rgba(12,13,20,0.95)';
+    ctx.fillRect(0,0,cv.width,cv.height);
+    // Damier subtil
+    for(let r=0;r<rows;r++){
+        for(let c=0;c<cols;c++){
+            const dark=(r+c)%2===0;
+            ctx.fillStyle=dark?'rgba(126,200,227,0.025)':'rgba(126,200,227,0.055)';
+            ctx.fillRect(c*cW, r*cH, cW, cH);
+        }
+    }
+    // Lignes de grille
+    ctx.strokeStyle='rgba(126,200,227,0.10)';
+    ctx.lineWidth=1;
+    for(let c=0;c<=cols;c++){
+        ctx.beginPath();ctx.moveTo(c*cW,0);ctx.lineTo(c*cW,cv.height);ctx.stroke();
+    }
+    for(let r=0;r<=rows;r++){
+        ctx.beginPath();ctx.moveTo(0,r*cH);ctx.lineTo(cv.width,r*cH);ctx.stroke();
+    }
+    return new THREE.CanvasTexture(cv);
+}
+
+// Grille pour chaque face — calculée en unités de GAP, centrée sur les positions
+const gridMeshes=[];
+function createFaceGrid(tIdx){
+    const tab=TABLEAUX[tIdx];
+    // Trouver l'étendue en unités de GAP (incluant la porte à 0,0)
+    let minGX=0,maxGX=0,minGY=0,maxGY=0;
+    tab.sats.forEach(s=>{
+        const gx=Math.round(s.x/GAP), gy=Math.round(s.y/GAP);
+        minGX=Math.min(minGX,gx);maxGX=Math.max(maxGX,gx);
+        minGY=Math.min(minGY,gy);maxGY=Math.max(maxGY,gy);
+    });
+    // Ajouter 1 case de marge tout autour
+    minGX-=1;maxGX+=1;minGY-=1;maxGY+=1;
+    const cols=maxGX-minGX+1, rows=maxGY-minGY+1;
+    // Centre de la grille en coordonnées monde
+    const cx=(minGX+maxGX)/2*GAP, cy=(minGY+maxGY)/2*GAP;
+    const w=cols*GAP, h=rows*GAP;
+    const tex=makeGridTexture(cols,rows);
+    const plane=new THREE.Mesh(
+        new THREE.PlaneGeometry(w,h),
+        new THREE.MeshBasicMaterial({map:tex,transparent:true,side:THREE.FrontSide,depthWrite:false})
+    );
+    plane.renderOrder=-2;
+    plane.userData.gridTableau=tIdx;
+    plane.userData.gridCx=cx;
+    plane.userData.gridCy=cy;
+    cubeGroup.add(plane);
+    gridMeshes.push({mesh:plane,tableau:tIdx,cx,cy});
+    return plane;
+}
+
+TABLEAUX.forEach((_,i)=>createFaceGrid(i));
+
+function assignGrids(){
+    const faceMap=[[mod(currentIdx),0],[mod(currentIdx+1),1],[mod(currentIdx-1),3]];
+    gridMeshes.forEach(g=>{
+        const entry=faceMap.find(f=>f[0]===g.tableau);
+        if(entry){
+            const q=new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0),FACE_ROT[entry[1]]);
+            const localPos=new THREE.Vector3(g.cx,g.cy,HALF+0.005).applyQuaternion(q);
+            g.mesh.position.copy(localPos);
+            g.mesh.quaternion.copy(q);
+            g.mesh.visible=true;
+        } else {
+            g.mesh.visible=false;
+        }
+    });
+}
 
 const sats=[];
 const SAT_DEPTH = 0.06;  // épaisseur du domino
@@ -474,6 +543,7 @@ function assignFaces(){
         const entry=faceMap.find(f=>f[0]===sat.tableau);
         if(entry){placeSat(sat,FACE_ROT[entry[1]]);if(sat.mesh.parent!==cubeGroup)cubeGroup.attach(sat.mesh);}
     });
+    assignGrids();
 }
 
 // ═══ NAV ═══
@@ -524,6 +594,7 @@ function onRotationComplete(){
             }
         });
         assignFaces();isAnimating=false;busy=false;refreshZoom();updateUI();
+        setTimeout(checkFusions,100);
     } else {
         currentIdx=mod(currentIdx+navDir);cubeGroup.quaternion.identity();targetQuat.identity();navDir=0;
         assignFaces();isAnimating=false;busy=false;updateUI();
@@ -569,6 +640,119 @@ function tapRelease(sat){
     sat.locked=false;lockedSat=null;
     assignFaces();
     updateUI();
+    setTimeout(checkFusions,100);
+}
+
+// ═══ FUSION ADAM ═══
+// Règle : si deux dominos adjacents verticalement ont la même icône sur les faces qui se touchent,
+// ils fusionnent. La face BASSE du domino du haut doit matcher la face HAUTE du domino du bas.
+// Si un domino est flippé (scale.y < 0), ses faces visuelles sont inversées.
+// Le résultat monte d'un état. Le perdant disparaît.
+
+const STATE_CHAIN=['white','silver','gold','emerald','cosmic','supernovae'];
+function nextState(st){ const i=STATE_CHAIN.indexOf(st||'white'); return i<STATE_CHAIN.length-1?STATE_CHAIN[i+1]:STATE_CHAIN[i]; }
+
+function getVisualTop(sat){
+    const flipped=sat.mesh.scale.y<0;
+    return flipped?sat.value[1]:sat.value[0];
+}
+function getVisualBottom(sat){
+    const flipped=sat.mesh.scale.y<0;
+    return flipped?sat.value[0]:sat.value[1];
+}
+
+function removeSat(sat){
+    sat.mesh.visible=false;
+    sat.tableau=-999; // exiler
+    sat.lx=99;sat.ly=99;
+}
+
+function updateSatVisual(sat){
+    const st=sat.state||'white';
+    const tint=st!=='white'?st:'normal';
+    sat.mesh.userData.numMesh.material.map=getDominoTex(sat.value[0],sat.value[1],tint);
+    sat.mesh.userData.bgMesh.material.map=getDominoBgTex(tint);
+}
+
+let fusionQueue=[];
+let fusionAnimating=false;
+
+function checkFusions(){
+    const fIdx=mod(currentIdx);
+    const faceSats=sats.filter(s=>s.tableau===fIdx&&!s.locked&&s.tableau>=0);
+    let fused=false;
+    
+    // Vérifier adjacence verticale : pour chaque paire haut/bas
+    for(let i=0;i<faceSats.length;i++){
+        const a=faceSats[i];
+        if(a.tableau<0)continue;
+        for(let j=i+1;j<faceSats.length;j++){
+            const b=faceSats[j];
+            if(b.tableau<0)continue;
+            // Adjacents verticalement ? (même x, différence y = GAP)
+            if(Math.abs(a.lx-b.lx)<0.15 && Math.abs(Math.abs(a.ly-b.ly)-GAP)<0.15){
+                // Qui est au-dessus ? (y plus grand = plus haut visuellement dans Three.js)
+                const upper=a.ly>b.ly?a:b;
+                const lower=a.ly>b.ly?b:a;
+                // Face basse du upper doit = face haute du lower
+                const ubottom=getVisualBottom(upper);
+                const ltop=getVisualTop(lower);
+                if(ubottom===ltop){
+                    // FUSION ! Le upper absorbe le lower
+                    upper.state=nextState(upper.state);
+                    updateSatVisual(upper);
+                    removeSat(lower);
+                    fused=true;
+                    // Flash visuel
+                    flashFusion(upper);
+                    break;
+                }
+            }
+            // Adjacents horizontalement ? (même y, différence x = GAP)
+            if(Math.abs(a.ly-b.ly)<0.15 && Math.abs(Math.abs(a.lx-b.lx)-GAP)<0.15){
+                // Qui est à gauche ?
+                const left=a.lx<b.lx?a:b;
+                const right=a.lx<b.lx?b:a;
+                // Face basse du left = face haute du right (lecture : droite du left vs gauche du right)
+                // Pour l'horizontale, on utilise aussi haut/bas car les dominos sont verticaux (haut/bas)
+                // Règle horizontale : face basse du left doit = face haute du right
+                const lbottom=getVisualBottom(left);
+                const rtop=getVisualTop(right);
+                if(lbottom===rtop){
+                    left.state=nextState(left.state);
+                    updateSatVisual(left);
+                    removeSat(right);
+                    fused=true;
+                    flashFusion(left);
+                    break;
+                }
+            }
+        }
+        if(fused)break;
+    }
+    // Chaîner les fusions
+    if(fused){
+        setTimeout(()=>{
+            assignFaces();refreshZoom();updateUI();
+            checkFusions();
+        },350);
+    }
+}
+
+// Flash visuel lors d'une fusion
+function flashFusion(sat){
+    const ud=sat.mesh.userData;
+    ud.glowMesh.material.color.set(0xffffff);
+    ud.glowMesh.material.opacity=0.8;
+    ud.haloMesh.material.color.set(0xffffff);
+    ud.haloMesh.material.opacity=0.5;
+    // Pulse scale
+    sat.mesh.scale.set(1.15,sat.mesh.scale.y>0?1.15:-1.15,1.15);
+    setTimeout(()=>{
+        sat.mesh.scale.set(1,sat.mesh.scale.y>0?1:-1,1);
+        ud.glowMesh.material.opacity=0;
+        ud.haloMesh.material.opacity=0;
+    },300);
 }
 
 // ═══ DRAG SWAP ═══
@@ -580,9 +764,8 @@ function dragSwap(sat, dirX, dirY){
     const fIdx=mod(currentIdx);
     if(sat.tableau!==fIdx)return false;
     const st=sat.state||'white';
-    if(st==='white') return false;
 
-    // Direction constraints
+    // Direction constraints par état (white = libre)
     if(st==='silver' && (dirY!==0||dirX===0)) return false;
     if(st==='emerald' && (dirX!==0||dirY===0)) return false;
     if(st==='gold' && (dirX===0||dirY===0)) return false;
@@ -670,6 +853,7 @@ function tickSwapAnim(dt){
             // Replacer le satellite
             placeSat(target,FACE_ROT[0]);
             assignFaces();swapAnim=null;refreshZoom();updateUI();
+            setTimeout(checkFusions,100);
         }
     } else {
         swapAnim.pairs.forEach(pair=>{
@@ -682,6 +866,7 @@ function tickSwapAnim(dt){
                 if(sat&&!sat.locked) placeSat(sat,FACE_ROT[0]);
             });
             assignFaces();swapAnim=null;refreshZoom();updateUI();
+            setTimeout(checkFusions,100);
         }
     }
 }
